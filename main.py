@@ -3,6 +3,7 @@ import json
 import gspread
 import google.generativeai as genai
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 from datetime import datetime
 from dotenv import load_dotenv
@@ -10,10 +11,10 @@ import warnings
 from flask import Flask
 from threading import Thread
 
-# 1. SETUP & CLOUD CONFIGURATION
+# 1. SETUP & CONFIGURATION
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-# Force Load .env (Only works on Local Machine, ignored on Cloud)
+# Force Load .env
 script_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(script_dir, '.env')
 load_dotenv(env_path)
@@ -21,33 +22,32 @@ load_dotenv(env_path)
 # 2. LOAD SECRETS
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-RAW_CREDS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON") # Fixed variable name to match standard
+RAW_CREDS_JSON = os.getenv("GOOGLE_DRIVE_CREDENTIALS")
 
 # 3. GOOGLE SHEET CONFIGURATION
 GOOGLE_SHEET_ID = "1JqPBe5aQJDIGPNRs3zVCMUnIU6NDpf8dUXs1oJImNTg"
 
-# 4. SMART NOTEBOOK LIBRARY
-# I added "SIGNALING" here because you had a section for it in instructions
+# 4. SMART NOTEBOOK LIBRARY (Only 4 Notebooks)
 NOTEBOOK_LIBRARY = {
     "DOUBT SOLVER": "https://notebooklm.google.com/notebook/7dddc77d-86e6-4e76-9dce-bf30b93688bf",
     "OEM": "https://notebooklm.google.com/notebook/822125b0-47f0-4703-8a1c-ec44abf5eb17",
     "ASSET_DATA": "https://notebooklm.google.com/notebook/e064cf10-8a99-4712-a4e7-ff809415ec8e",
-    "RULES": "https://notebooklm.google.com/notebook/27c3dfab-5300-4ce1-8cd9-fe1fb9bbb259",
-    "SIGNALING": "https://notebooklm.google.com/notebook/YOUR_SIGNALING_LINK_HERE" # <--- Update this link!
+    "RULES": "https://notebooklm.google.com/notebook/27c3dfab-5300-4ce1-8cd9-fe1fb9bbb259"
 }
 
-# --- FAKE WEB SERVER (FOR RENDER KEEP-ALIVE) ---
+# --- FAKE WEB SERVER ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "🤖 Railway Bot is Alive and Running!"
+    return "🤖 Railway Bot is Alive!"
 
 def run_http():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
 
 def keep_alive():
     t = Thread(target=run_http)
+    t.daemon = True
     t.start()
 
 # --- SERVICE CONNECTION ---
@@ -80,7 +80,7 @@ tools = [extract_transaction_data]
 
 # SMART SYSTEM INSTRUCTION
 model = genai.GenerativeModel(
-    model_name='gemini-1.5-flash', # Switched to 1.5-flash for stability (2.0 is experimental)
+    model_name='gemini-2.0-flash',
     tools=tools,
     system_instruction="""
     You are an intelligent Railway Log Assistant.
@@ -93,31 +93,23 @@ model = genai.GenerativeModel(
     - IF the user asks a question, Answer it, then APPEND A SOURCE TAG:
 
       1. [SOURCE: DOUBT SOLVER] -> Use this for FIELD DIAGNOSIS:
-         - Track Circuits (High/Low Voltage issues).
-         - Point Machines (Motor not starting, gap issues).
-         - Datalogger Analysis (Relay status TPR, NWCPR).
-         - Flowcharts for troubleshooting.
+         - Track Circuits (High/Low Voltage). Point Machines (Motor faults).
+         - Datalogger Analysis. Troubleshooting Flowcharts.
 
       2. [SOURCE: OEM] -> Use this for EQUIPMENT DETAILS:
-         - Electronic Interlocking (Medha, Siemens, Kyosan).
-         - Axle Counters (Frauscher, CEL, MSDAC).
-         - Block Systems (UFSBI, Deltron, Webfil).
-         - Power Supply (IPS, ELD, Battery).
+         - EI (Medha, Siemens, Kyosan). Axle Counters (Frauscher, CEL).
+         - Block Systems (UFSBI). Power Supply (IPS, ELD).
          - Error codes, card replacement, LED status.
 
       3. [SOURCE: ASSET_DATA] -> Use this for QUANTITIES & LOCATIONS:
-         - Counts of machines, IPS, Batteries.
-         - Station Details, System Maps, Jurisdiction.
+         - Inventory Counts. Station Details. Jurisdiction.
          - Progress targets and Division highlights.
 
-      4. [SOURCE: RULES] -> Use this for GENERAL RULES:
-         - G&SR (General & Subsidiary Rules).
-         - Train Operation safety, Speed limits, Shunting.
-
-      5. [SOURCE: SIGNALING] -> Use this for TECHNICAL SPECS:
-         - Relay specifications, Circuit diagrams.
-         - RDSO Technical Advisory Notes (TANs).
-         - Cable plans and Inter-departmental interfaces.
+      4. [SOURCE: RULES] -> Use this for RULES & SIGNALING SPECS:
+         - IRSEM (Signal Engineering Manual).
+         - Circuit Diagrams & Drawings (Annexure II).
+         - RDSO TANs & Policies.
+         - G&SR (General Rules), Speed Limits, Shunting.
       
     If ambiguous, you may append multiple tags.
     """
@@ -156,21 +148,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 status_text = args.get('status', 'Info')
                 
                 row_data = [
-                    user_name, args.get('category', 'N/A'), args.get('item', 'Unknown'),
-                    args.get('quantity', 0), args.get('location', 'N/A'), status_text,
-                    args.get('sentiment', 'Neutral'), user_text, current_time
+                    user_name,
+                    args.get('category', 'N/A'),
+                    args.get('item', 'Unknown'),
+                    args.get('quantity', 0),
+                    args.get('location', 'N/A'),
+                    status_text,
+                    args.get('sentiment', 'Neutral'),
+                    user_text,
+                    current_time
                 ]
                 sh.append_row(row_data)
                 
-                confirmation = f"✅ **Logged:** {status_text} | {args.get('item')} | Qty: {args.get('quantity')}"
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=confirmation, parse_mode='Markdown', reply_to_message_id=update.message.message_id)
+                msg = f"✅ **Logged:** {status_text} | {args.get('item')} | Qty: {args.get('quantity')}"
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode=ParseMode.MARKDOWN)
         
         # SCENARIO B: KNOWLEDGE ANSWER
         else:
             final_text = response.text
             links_to_add = []
 
-            # Check for Tags
+            # Check for Tags (Only the 4 that exist)
             if "[SOURCE: DOUBT SOLVER]" in final_text:
                 links_to_add.append(f"🚦 [Troubleshooting Guide]({NOTEBOOK_LIBRARY['DOUBT SOLVER']})")
                 final_text = final_text.replace("[SOURCE: DOUBT SOLVER]", "")
@@ -184,24 +182,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 final_text = final_text.replace("[SOURCE: ASSET_DATA]", "")
             
             if "[SOURCE: RULES]" in final_text:
-                links_to_add.append(f"📖 [General Rules]({NOTEBOOK_LIBRARY['RULES']})")
+                links_to_add.append(f"📖 [Rules & Specs]({NOTEBOOK_LIBRARY['RULES']})")
                 final_text = final_text.replace("[SOURCE: RULES]", "")
-
-            if "[SOURCE: SIGNALING]" in final_text:
-                links_to_add.append(f"📡 [Signaling Specs]({NOTEBOOK_LIBRARY['SIGNALING']})")
-                final_text = final_text.replace("[SOURCE: SIGNALING]", "")
 
             # Append links
             if links_to_add:
                 final_text += "\n\n" + "\n".join(links_to_add)
                 final_text += "\n⚠️ *Tip:* If asked to login, tap 'Open in Chrome'."
 
-            # --- SAFE SEND BLOCK (CRITICAL FIX) ---
+            # --- SAFE SEND BLOCK ---
             try:
-                # Try Markdown first
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=final_text, parse_mode='Markdown')
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=final_text, parse_mode=ParseMode.MARKDOWN)
             except Exception:
-                # If Markdown fails (underscores etc), send Plain Text
                 print("⚠️ Markdown failed. Sending plain text.")
                 clean_text = final_text.replace("[", "").replace("]", " ").replace("(", "Link: ").replace(")", "")
                 await context.bot.send_message(chat_id=update.effective_chat.id, text=clean_text)
@@ -210,7 +202,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error: {e}")
 
 if __name__ == '__main__':
-    keep_alive() 
+    if os.environ.get("PORT"):
+        keep_alive()
+        
     print("🤖 Bot is initializing...")
     app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app_bot.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
