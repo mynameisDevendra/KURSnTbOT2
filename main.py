@@ -170,4 +170,5 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if "[SOURCE: OEM]" in final_text:
                 link = NOTEBOOK_LIBRARY.get("OEM", "https://notebooklm.google.com")
                 links_to_add.append(f"🔧 [OEM Manuals]({link})")
-                final_text = final_text.replace("[SOURCE:
+                # FIXED
+		final_text = final_text.replace("[SOURCE: DOUBT SOLVER]", "")
