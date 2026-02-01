@@ -103,7 +103,7 @@ model = genai.GenerativeModel(
     #(Example: "What is voltage as per OEM?" -> [SOURCE: OEM])
     """
 )
-)
+
 
 # --- MAIN CHAT HANDLER (BULLETPROOF VERSION) ---
 
