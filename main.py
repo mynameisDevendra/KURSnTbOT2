@@ -10,11 +10,11 @@ from dotenv import load_dotenv
 import warnings
 from flask import Flask
 from threading import Thread
+import traceback # Added to help see errors
 
 # 1. SETUP & CONFIGURATION
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-# Force Load .env
 script_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(script_dir, '.env')
 load_dotenv(env_path)
@@ -27,7 +27,8 @@ RAW_CREDS_JSON = os.getenv("GOOGLE_DRIVE_CREDENTIALS")
 # 3. GOOGLE SHEET CONFIGURATION
 GOOGLE_SHEET_ID = "1JqPBe5aQJDIGPNRs3zVCMUnIU6NDpf8dUXs1oJImNTg"
 
-# 4. SMART NOTEBOOK LIBRARY (Only 4 Notebooks)
+# 4. SMART NOTEBOOK LIBRARY
+# using .get() later prevents crashes if keys are missing
 NOTEBOOK_LIBRARY = {
     "DOUBT SOLVER": "https://notebooklm.google.com/notebook/7dddc77d-86e6-4e76-9dce-bf30b93688bf",
     "OEM": "https://notebooklm.google.com/notebook/822125b0-47f0-4703-8a1c-ec44abf5eb17",
@@ -52,9 +53,8 @@ def keep_alive():
 
 # --- SERVICE CONNECTION ---
 if not GEMINI_KEY or not TELEGRAM_TOKEN:
-    print("⚠️ Keys missing! If on Render, check your Environment Variables.")
+    print("⚠️ Keys missing! Check .env or Render Variables.")
 
-# Connect to Google Sheets
 print("⏳ Connecting to Database...")
 try:
     if RAW_CREDS_JSON:
@@ -67,7 +67,6 @@ try:
 except Exception as e:
     print(f"❌ Connection Error: {e}")
 
-# Connect to Gemini
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
 
@@ -78,7 +77,6 @@ def extract_transaction_data(category: str, item: str, quantity: int, location: 
 
 tools = [extract_transaction_data]
 
-# SMART SYSTEM INSTRUCTION
 model = genai.GenerativeModel(
     model_name='gemini-2.0-flash',
     tools=tools,
@@ -86,59 +84,48 @@ model = genai.GenerativeModel(
     You are an intelligent Railway Log Assistant.
     
     MODE 1: MATERIAL LOGGING
-    - IF the user reports a material movement or status update -> Call 'extract_transaction_data'.
-    - IF it is a REPLY: Extract Item/Qty from the *Context*, but Status/Action from the *Reply*.
+    - IF user reports movement/status -> Call 'extract_transaction_data'.
+    - IF REPLY: Extract Item from Context, Status from Reply.
     
-    MODE 2: KNOWLEDGE RETRIEVAL (Notebooks)
-    - IF the user asks a question, Answer it, then APPEND A SOURCE TAG:
-
-      1. [SOURCE: DOUBT SOLVER] -> Use this for FIELD DIAGNOSIS:
-         - Track Circuits (High/Low Voltage). Point Machines (Motor faults).
-         - Datalogger Analysis. Troubleshooting Flowcharts.
-
-      2. [SOURCE: OEM] -> Use this for EQUIPMENT DETAILS:
-         - EI (Medha, Siemens, Kyosan). Axle Counters (Frauscher, CEL).
-         - Block Systems (UFSBI). Power Supply (IPS, ELD).
-         - Error codes, card replacement, LED status.
-
-      3. [SOURCE: ASSET_DATA] -> Use this for QUANTITIES & LOCATIONS:
-         - Inventory Counts. Station Details. Jurisdiction.
-         - Progress targets and Division highlights.
-
-      4. [SOURCE: RULES] -> Use this for RULES & SIGNALING SPECS:
-         - IRSEM (Signal Engineering Manual).
-         - Circuit Diagrams & Drawings (Annexure II).
-         - RDSO TANs & Policies.
-         - G&SR (General Rules), Speed Limits, Shunting.
+    MODE 2: KNOWLEDGE (Notebooks)
+    - IF user asks question, Answer it, then APPEND A SOURCE TAG:
+      1. [SOURCE: DOUBT SOLVER] -> Troubleshooting, Track Circuits, Point Machines.
+      2. [SOURCE: OEM] -> Equipment Manuals, EI, Axle Counters, IPS, Block Inst.
+      3. [SOURCE: ASSET_DATA] -> Quantities, Locations, Jurisdiction, Targets.
+      4. [SOURCE: RULES] -> G&SR, IRSEM, Signaling Specs, Drawings.
       
-    If ambiguous, you may append multiple tags.
+    If ambiguous, append multiple tags.
     """
 )
 
-# --- MAIN CHAT HANDLER ---
+# --- MAIN CHAT HANDLER (BULLETPROOF VERSION) ---
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
-    user_name = update.effective_user.first_name
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # 1. SMART CONTEXT DETECTION
-    if update.message.reply_to_message and update.message.reply_to_message.text:
-        original_text = update.message.reply_to_message.text
-        prompt_input = (
-            f"CONTEXT [Original Msg]: '{original_text}'\n"
-            f"ACTION [User Reply]: '{user_text}'\n"
-            f"INSTRUCTION: User is updating a request. Extract Item from Context, Status from Action."
-        )
-    else:
-        prompt_input = user_text
-
-    # 2. START AI PROCESSING
-    chat = model.start_chat(enable_automatic_function_calling=False)
-    
+    # GLOBAL TRY-CATCH to prevent "Stuck" bot
     try:
+        user_text = update.message.text
+        user_name = update.effective_user.first_name
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        print(f"📩 Message from {user_name}: {user_text}") # Debug Print
+
+        # 1. SMART CONTEXT
+        if update.message.reply_to_message and update.message.reply_to_message.text:
+            original_text = update.message.reply_to_message.text
+            prompt_input = (
+                f"CONTEXT: '{original_text}'\n"
+                f"REPLY: '{user_text}'\n"
+                f"INSTRUCTION: Extract Item from Context, Status from Reply."
+            )
+        else:
+            prompt_input = user_text
+
+        # 2. GENERATE
+        print("🤔 AI is thinking...")
+        chat = model.start_chat(enable_automatic_function_calling=False)
         response = chat.send_message(prompt_input)
         part = response.parts[0]
+        print("💡 AI generated response.")
 
         # SCENARIO A: LOGGING
         if part.function_call:
@@ -146,60 +133,69 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if fc.name == 'extract_transaction_data':
                 args = fc.args
                 status_text = args.get('status', 'Info')
-                
                 row_data = [
-                    user_name,
-                    args.get('category', 'N/A'),
-                    args.get('item', 'Unknown'),
-                    args.get('quantity', 0),
-                    args.get('location', 'N/A'),
-                    status_text,
-                    args.get('sentiment', 'Neutral'),
-                    user_text,
-                    current_time
+                    user_name, args.get('category'), args.get('item'),
+                    args.get('quantity'), args.get('location'), status_text,
+                    args.get('sentiment'), user_text, current_time
                 ]
                 sh.append_row(row_data)
+                print("📝 Row added to sheet.")
                 
                 msg = f"✅ **Logged:** {status_text} | {args.get('item')} | Qty: {args.get('quantity')}"
                 await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode=ParseMode.MARKDOWN)
         
-        # SCENARIO B: KNOWLEDGE ANSWER
+        # SCENARIO B: KNOWLEDGE
         else:
             final_text = response.text
             links_to_add = []
 
-            # Check for Tags (Only the 4 that exist)
+            # Robust Link Swapping (Uses .get to prevent crashes)
             if "[SOURCE: DOUBT SOLVER]" in final_text:
-                links_to_add.append(f"🚦 [Troubleshooting Guide]({NOTEBOOK_LIBRARY['DOUBT SOLVER']})")
+                link = NOTEBOOK_LIBRARY.get("DOUBT SOLVER", "https://notebooklm.google.com")
+                links_to_add.append(f"🚦 [Troubleshooting Guide]({link})")
                 final_text = final_text.replace("[SOURCE: DOUBT SOLVER]", "")
             
             if "[SOURCE: OEM]" in final_text:
-                links_to_add.append(f"🔧 [OEM Manuals]({NOTEBOOK_LIBRARY['OEM']})")
+                link = NOTEBOOK_LIBRARY.get("OEM", "https://notebooklm.google.com")
+                links_to_add.append(f"🔧 [OEM Manuals]({link})")
                 final_text = final_text.replace("[SOURCE: OEM]", "")
 
             if "[SOURCE: ASSET_DATA]" in final_text:
-                links_to_add.append(f"📊 [Asset Data]({NOTEBOOK_LIBRARY['ASSET_DATA']})")
+                link = NOTEBOOK_LIBRARY.get("ASSET_DATA", "https://notebooklm.google.com")
+                links_to_add.append(f"📊 [Asset Data]({link})")
                 final_text = final_text.replace("[SOURCE: ASSET_DATA]", "")
             
             if "[SOURCE: RULES]" in final_text:
-                links_to_add.append(f"📖 [Rules & Specs]({NOTEBOOK_LIBRARY['RULES']})")
+                link = NOTEBOOK_LIBRARY.get("RULES", "https://notebooklm.google.com")
+                links_to_add.append(f"📖 [Rules & Specs]({link})")
                 final_text = final_text.replace("[SOURCE: RULES]", "")
+            
+            # Catch-all for stray Signaling tags -> Map to RULES
+            if "[SOURCE: SIGNALING]" in final_text:
+                link = NOTEBOOK_LIBRARY.get("RULES", "https://notebooklm.google.com")
+                links_to_add.append(f"📡 [Signaling Specs]({link})")
+                final_text = final_text.replace("[SOURCE: SIGNALING]", "")
 
-            # Append links
             if links_to_add:
                 final_text += "\n\n" + "\n".join(links_to_add)
-                final_text += "\n⚠️ *Tip:* If asked to login, tap 'Open in Chrome'."
+                final_text += "\n⚠️ *Tip:* Open in Chrome."
 
-            # --- SAFE SEND BLOCK ---
+            # SAFE SEND BLOCK
+            print("📤 Sending message...")
             try:
                 await context.bot.send_message(chat_id=update.effective_chat.id, text=final_text, parse_mode=ParseMode.MARKDOWN)
-            except Exception:
-                print("⚠️ Markdown failed. Sending plain text.")
-                clean_text = final_text.replace("[", "").replace("]", " ").replace("(", "Link: ").replace(")", "")
+            except Exception as e:
+                print(f"⚠️ Markdown Error: {e}. Sending Plain Text.")
+                # Strip all brackets/markdown to ensure it sends
+                clean_text = final_text.replace("[", "").replace("]", " ").replace("(", " Link: ").replace(")", "")
                 await context.bot.send_message(chat_id=update.effective_chat.id, text=clean_text)
 
     except Exception as e:
-        print(f"Error: {e}")
+        # This catches ANY other crash (Math error, Library error, etc)
+        error_msg = f"❌ System Error: {str(e)}"
+        print(error_msg)
+        traceback.print_exc() # Prints full error to terminal
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ I encountered an error while processing that. Please try again.")
 
 if __name__ == '__main__':
     if os.environ.get("PORT"):
