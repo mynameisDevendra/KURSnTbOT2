@@ -76,7 +76,7 @@ def extract_transaction_data(category: str, item: str, quantity: int, location: 
 
 tools = [extract_transaction_data]
 
-# DISABLE SAFETY FILTERS (Critical for Railway bots)
+# DISABLE SAFETY FILTERS
 safety_settings = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -84,7 +84,7 @@ safety_settings = [
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
 ]
 
-# Using PRO model (Higher capability)
+# Using PRO model
 model = genai.GenerativeModel(
     model_name='gemini-1.5-pro', 
     tools=tools,
@@ -116,7 +116,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_text = update.message.text
         user_name = update.effective_user.first_name
         
-        # DEBUG PRINT: Verify message is received
         print(f"\n📩 RECEIVED from {user_name}: {user_text}")
 
         # 1. SMART CONTEXT
@@ -170,5 +169,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if "[SOURCE: OEM]" in final_text:
                 link = NOTEBOOK_LIBRARY.get("OEM", "https://notebooklm.google.com")
                 links_to_add.append(f"🔧 [OEM Manuals]({link})")
-                # FIXED
-		final_text = final_text.replace("[SOURCE: DOUBT SOLVER]", "")
+                final_text = final_text.replace("[SOURCE: OEM]", "")
+
+            if "[SOURCE: ASSET_DATA]" in final_text:
+                link = NOTEBOOK_LIBRARY.get("ASSET_DATA", "https://notebooklm.google.com")
+                links_to_add.append(f"📊 [Asset Data]({link})")
+                final_text = final_text.replace("[SOURCE: ASSET_DATA]", "")
+            
+            if "[SOURCE: RULES]" in final_text:
+                link = NOTEBOOK_LIBRARY.get("RULES", "https://notebooklm.google.com")
+                links_to_add.append(f"📖 [Rules & Specs]({link})")
+                final_text = final_text.replace("[SOURCE: RULES]", "")
+
+            if links_to_add:
+                final_text += "\n\n" + "\n".join(links_to_add)
+                final_text += "\n⚠️ *Tip:* Open in Chrome."
+
+            # SAFE SEND BLOCK
+            print("📤 Sending reply to Telegram...")
+            try:
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=final_text, parse_mode=ParseMode.MARKDOWN)
+                print("✅ Sent successfully!")
+            except Exception as e:
+                print(f"⚠️ Markdown Error: {e}. Sending Plain Text.")
+                clean_text = final_text.replace("[", "").replace("]", " ").replace("(", " Link: ").replace(")", "")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=clean_text)
+
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR: {str(e)}")
+        traceback.print_exc()
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ System Error. Check Terminal.")
+
+if __name__ == '__main__':
+    if os.environ.get("PORT"):
+        keep_alive()
+        
+    print("🤖 Bot is initializing...")
+    app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app_bot.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    print("🚀 Bot is RUNNING!")
+    app_bot.run_polling()
