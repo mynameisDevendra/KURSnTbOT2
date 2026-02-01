@@ -18,21 +18,22 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 env_path = os.path.join(script_dir, '.env')
 load_dotenv(env_path)
 
-# 2. LOAD SECRETS (From .env or Render Environment)
+# 2. LOAD SECRETS
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-RAW_CREDS_JSON = os.getenv("GOOGLE_DRIVE_CREDENTIALS")
+RAW_CREDS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON") # Fixed variable name to match standard
 
 # 3. GOOGLE SHEET CONFIGURATION
 GOOGLE_SHEET_ID = "1JqPBe5aQJDIGPNRs3zVCMUnIU6NDpf8dUXs1oJImNTg"
 
-# 4. SMART NOTEBOOK LIBRARY (Update these links!)
-# The AI will decide which one to show based on the user's question.
+# 4. SMART NOTEBOOK LIBRARY
+# I added "SIGNALING" here because you had a section for it in instructions
 NOTEBOOK_LIBRARY = {
     "DOUBT SOLVER": "https://notebooklm.google.com/notebook/7dddc77d-86e6-4e76-9dce-bf30b93688bf",
     "OEM": "https://notebooklm.google.com/notebook/822125b0-47f0-4703-8a1c-ec44abf5eb17",
     "ASSET_DATA": "https://notebooklm.google.com/notebook/e064cf10-8a99-4712-a4e7-ff809415ec8e",
-    "RULES": "https://notebooklm.google.com/notebook/27c3dfab-5300-4ce1-8cd9-fe1fb9bbb259"
+    "RULES": "https://notebooklm.google.com/notebook/27c3dfab-5300-4ce1-8cd9-fe1fb9bbb259",
+    "SIGNALING": "https://notebooklm.google.com/notebook/YOUR_SIGNALING_LINK_HERE" # <--- Update this link!
 }
 
 # --- FAKE WEB SERVER (FOR RENDER KEEP-ALIVE) ---
@@ -73,15 +74,13 @@ if GEMINI_KEY:
 # --- DEFINE AI TOOLS & BRAIN ---
 
 def extract_transaction_data(category: str, item: str, quantity: int, location: str, status: str, sentiment: str):
-    """ Dummy function to trigger the AI tool use """
     return True 
 
 tools = [extract_transaction_data]
 
 # SMART SYSTEM INSTRUCTION
-# This teaches the AI to handle Logs AND classify Notebook topics
 model = genai.GenerativeModel(
-    model_name='gemini-2.0-flash',
+    model_name='gemini-1.5-flash', # Switched to 1.5-flash for stability (2.0 is experimental)
     tools=tools,
     system_instruction="""
     You are an intelligent Railway Log Assistant.
@@ -92,37 +91,33 @@ model = genai.GenerativeModel(
     
     MODE 2: KNOWLEDGE RETRIEVAL (Notebooks)
     - IF the user asks a question, Answer it, then APPEND A SOURCE TAG:
-      - # ... inside system_instruction ...
 
-      [SOURCE: DOUBT SOLVER] -> Use this for FIELD DIAGNOSIS (Symptoms & Fixes):
-         - **Track Circuits:** Solving "High Voltage/Low Current" or "Low Voltage/High Current" issues at Feed/Relay ends.
-         - **Point Machines:** Fixing common failures like "Motor not starting," "Continuous rotation," or "Gap in tongue rail."
-         - **Datalogger Analysis:** Interpreting specific relay (TPR, NWCPR, RWCPR) statuses to find the fault.
-         - **Step-by-Step Flowcharts:** Logic trees for identifying open circuits, loose connections, or obstructions. -> [SOURCE: DOUBT SOLVER]
-      - # ... inside system_instruction ...
+      1. [SOURCE: DOUBT SOLVER] -> Use this for FIELD DIAGNOSIS:
+         - Track Circuits (High/Low Voltage issues).
+         - Point Machines (Motor not starting, gap issues).
+         - Datalogger Analysis (Relay status TPR, NWCPR).
+         - Flowcharts for troubleshooting.
 
-      [SOURCE: OEM_MANUAL] -> Use this for SPECIFIC EQUIPMENT details:
-         - **Electronic Interlocking (EI):** Troubleshooting & Cards for Medha (MEI633), Siemens (Westrace Mk2), and Kyosan (K5BMC).
-         - **Axle Counters (DAC):** Error codes & Resetting for Frauscher (FAdC R2), CEL (HASSDAC), Medha (MSDAC), and GG Tronics.
-         - **Block Systems (UFSBI):** Operation & Maintenance for Deltron, Webfil, and Automatic Block Signaling (ABS).
-         - **Power & Safety:** IPS Manuals (HBL, Statcon), ELD (Anu Vidyut, AEW), and Fire/Smoke Detectors.
-         - **Key Triggers:** "Error code", "LED status", "Card replacement", "Wiring diagram for [Brand]", "Maintenance Schedule". -> [SOURCE: OEM]
-      - # ... inside the system_instruction block ...
+      2. [SOURCE: OEM] -> Use this for EQUIPMENT DETAILS:
+         - Electronic Interlocking (Medha, Siemens, Kyosan).
+         - Axle Counters (Frauscher, CEL, MSDAC).
+         - Block Systems (UFSBI, Deltron, Webfil).
+         - Power Supply (IPS, ELD, Battery).
+         - Error codes, card replacement, LED status.
 
-      [SOURCE: ASSET_DATA] -> Use this for:
-         - **Inventory & Quantities:** Counts and details of Point Machines, IPS, Batteries, Block Instruments (DLBI/TLBI), and LC Gates.
-         - **Axle Counters:** Specifics of MSDAC, HASSDAC, and SSDAC (Makes like Frauscher, Medha, CEL, and Section locations).
-         - **Station Details:** Station Class, Interlocking Standard (Std II/III), System Maps, and Distances (Km).
-         - **Organization & Jurisdiction:** Who is the in-charge SSE/JE or ASTE for a specific section (Jurisdiction lists).
-         - **Progress & Targets:** Monthly achievements (PCDO), ongoing works (Cable replacement), and Division highlights. -> [SOURCE: ASSET_DATA]
-      - # ... inside the system_instruction block ...
+      3. [SOURCE: ASSET_DATA] -> Use this for QUANTITIES & LOCATIONS:
+         - Counts of machines, IPS, Batteries.
+         - Station Details, System Maps, Jurisdiction.
+         - Progress targets and Division highlights.
 
-      [SOURCE: SIGNALING_MANUAL] -> Use this for:
-         - **Installation & Maintenance:** Standard practices for Relays, Points, EI, and Block Instruments (from IRSEM & Annexure I).
-         - **Technical Policies:** RDSO Technical Advisory Notes (TANs), Earthing & Lightning protection, and recent Corrigendums.
-         - **Drawings & Circuits:** Standard circuit diagrams, contact analysis, and power supply arrangements (from Annexure II).
-         - **Inter-departmental Rules:** Interface rules with Track (P-Way) and Traction (OHE/ACTM) departments.
-         - **Specifications:** Technical specs for items like IPIS, Cables, and Integrated Power Systems (IPS). -> [SOURCE: RULES]
+      4. [SOURCE: RULES] -> Use this for GENERAL RULES:
+         - G&SR (General & Subsidiary Rules).
+         - Train Operation safety, Speed limits, Shunting.
+
+      5. [SOURCE: SIGNALING] -> Use this for TECHNICAL SPECS:
+         - Relay specifications, Circuit diagrams.
+         - RDSO Technical Advisory Notes (TANs).
+         - Cable plans and Inter-departmental interfaces.
       
     If ambiguous, you may append multiple tags.
     """
@@ -135,10 +130,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # 1. SMART CONTEXT DETECTION (Handle Replies)
+    # 1. SMART CONTEXT DETECTION
     if update.message.reply_to_message and update.message.reply_to_message.text:
         original_text = update.message.reply_to_message.text
-        # Combine messages so AI understands "Issued" refers to the "Relays" above
         prompt_input = (
             f"CONTEXT [Original Msg]: '{original_text}'\n"
             f"ACTION [User Reply]: '{user_text}'\n"
@@ -154,7 +148,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = chat.send_message(prompt_input)
         part = response.parts[0]
 
-        # SCENARIO A: AI WANTS TO LOG DATA (Tool Call)
+        # SCENARIO A: LOGGING
         if part.function_call:
             fc = part.function_call
             if fc.name == 'extract_transaction_data':
@@ -162,36 +156,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 status_text = args.get('status', 'Info')
                 
                 row_data = [
-                    user_name,
-                    args.get('category', 'N/A'),
-                    args.get('item', 'Unknown'),
-                    args.get('quantity', 0),
-                    args.get('location', 'N/A'),
-                    status_text,
-                    args.get('sentiment', 'Neutral'),
-                    user_text,
-                    current_time
+                    user_name, args.get('category', 'N/A'), args.get('item', 'Unknown'),
+                    args.get('quantity', 0), args.get('location', 'N/A'), status_text,
+                    args.get('sentiment', 'Neutral'), user_text, current_time
                 ]
                 sh.append_row(row_data)
                 
-                confirmation = (
-                    f"✅ **Update Logged**\n"
-                    f"Status: {status_text} | Item: {args.get('item')} | Qty: {args.get('quantity')}"
-                )
+                confirmation = f"✅ **Logged:** {status_text} | {args.get('item')} | Qty: {args.get('quantity')}"
                 await context.bot.send_message(chat_id=update.effective_chat.id, text=confirmation, parse_mode='Markdown', reply_to_message_id=update.message.message_id)
         
-        # SCENARIO B: AI ANSWERS A QUESTION (Smart Notebook Linking)
+        # SCENARIO B: KNOWLEDGE ANSWER
         else:
             final_text = response.text
             links_to_add = []
 
-            # Check for Tags and swap them with real links
+            # Check for Tags
             if "[SOURCE: DOUBT SOLVER]" in final_text:
-                links_to_add.append(f"🚦 [DOUBT SOLVER]({NOTEBOOK_LIBRARY['DOUBT SOLVER']})")
+                links_to_add.append(f"🚦 [Troubleshooting Guide]({NOTEBOOK_LIBRARY['DOUBT SOLVER']})")
                 final_text = final_text.replace("[SOURCE: DOUBT SOLVER]", "")
             
             if "[SOURCE: OEM]" in final_text:
-                links_to_add.append(f"📡 [OEM]({NOTEBOOK_LIBRARY['OEM']})")
+                links_to_add.append(f"🔧 [OEM Manuals]({NOTEBOOK_LIBRARY['OEM']})")
                 final_text = final_text.replace("[SOURCE: OEM]", "")
 
             if "[SOURCE: ASSET_DATA]" in final_text:
@@ -202,20 +187,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 links_to_add.append(f"📖 [General Rules]({NOTEBOOK_LIBRARY['RULES']})")
                 final_text = final_text.replace("[SOURCE: RULES]", "")
 
-            # Append links if any were found
+            if "[SOURCE: SIGNALING]" in final_text:
+                links_to_add.append(f"📡 [Signaling Specs]({NOTEBOOK_LIBRARY['SIGNALING']})")
+                final_text = final_text.replace("[SOURCE: SIGNALING]", "")
+
+            # Append links
             if links_to_add:
                 final_text += "\n\n" + "\n".join(links_to_add)
                 final_text += "\n⚠️ *Tip:* If asked to login, tap 'Open in Chrome'."
 
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=final_text, parse_mode='Markdown')
+            # --- SAFE SEND BLOCK (CRITICAL FIX) ---
+            try:
+                # Try Markdown first
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=final_text, parse_mode='Markdown')
+            except Exception:
+                # If Markdown fails (underscores etc), send Plain Text
+                print("⚠️ Markdown failed. Sending plain text.")
+                clean_text = final_text.replace("[", "").replace("]", " ").replace("(", "Link: ").replace(")", "")
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=clean_text)
 
     except Exception as e:
         print(f"Error: {e}")
-        # Optional: Send error to user (disable in production if noisy)
-        # await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ System Busy. Try again.")
 
 if __name__ == '__main__':
-    keep_alive() # Starts the Fake Web Server for Render
+    keep_alive() 
     print("🤖 Bot is initializing...")
     app_bot = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app_bot.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
