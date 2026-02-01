@@ -87,15 +87,22 @@ model = genai.GenerativeModel(
     - IF user reports movement/status -> Call 'extract_transaction_data'.
     - IF REPLY: Extract Item from Context, Status from Reply.
     
-    MODE 2: KNOWLEDGE (Notebooks)
-    - IF user asks question, Answer it, then APPEND A SOURCE TAG:
-      1. [SOURCE: DOUBT SOLVER] -> Troubleshooting, Track Circuits, Point Machines.
-      2. [SOURCE: OEM] -> Equipment Manuals, EI, Axle Counters, IPS, Block Inst.
-      3. [SOURCE: ASSET_DATA] -> Quantities, Locations, Jurisdiction, Targets.
-      4. [SOURCE: RULES] -> G&SR, IRSEM, Signaling Specs, Drawings.
-      
-    If ambiguous, append multiple tags.
+   MODE 2: KNOWLEDGE RETRIEVAL (Strict Priority Routing)
+    
+    STEP 1: CHECK FOR EXPLICIT KEYWORDS (Priority High)
+    - If user says "As per SEM", "Rule"-> APPEND [SOURCE: RULES]
+    - If user says "As per OEM"  -> APPEND [SOURCE: OEM]
+    - If user says "As per TS" -> APPEND [SOURCE: ASSET_DATA]
+
+    STEP 2: DEFAULT BEHAVIOR (Priority Low)
+    - If NO specific source is mentioned, assume it is a FIELD FAILURE or TROUBLESHOOTING query.
+    - Answer based on symptoms and APPEND [SOURCE: DOUBT SOLVER]
+    
+    #(Example: "Point machine not working" -> [SOURCE: DOUBT SOLVER])
+    #(Example: "What is voltage of relay?" -> [SOURCE: DOUBT SOLVER])
+    #(Example: "What is voltage as per OEM?" -> [SOURCE: OEM])
     """
+)
 )
 
 # --- MAIN CHAT HANDLER (BULLETPROOF VERSION) ---
